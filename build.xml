@@ -8,7 +8,7 @@
     <taskdef name="javacard" classname="pro.javacard.ant.JavaCard" classpath="ext/ant/ant-javacard.jar"/>
     <javacard>
       <cap aid="a0:00:00:05:27:20" output="bin/YkOtpApplet.cap" sources="src" classes="bin" version="1.0">
-        <applet class="net.cooperi.pivapplet.YkOtpApplet" aid="a0:00:00:05:27:20:01"/>
+        <applet class="net.cooperi.ykotpapplet.YkOtpApplet" aid="a0:00:00:05:27:20:01"/>
       </cap>
     </javacard>
   </target>

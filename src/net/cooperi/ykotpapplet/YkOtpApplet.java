@@ -58,7 +58,13 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 	private byte pgmSeq = PGM_SEQ_INVALID;
 	private byte[] serial = null;
 
+	private byte[] hmacKey1 = null;
+	private byte[] hmacKey2 = null;
+
+	private byte[] hmacBuf = null;
+
 	private RandomData randData = null;
+	private MessageDigest sha1 = null;
 
 	public static void
 	install(byte[] info, short off, byte len)
@@ -75,6 +81,16 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		serial = new byte[4];
 		serial[0] = (byte)0xFF;
 		randData.generateData(serial, (short)1, (short)3);
+
+		hmacKey1 = new byte[64];
+		randData.generateData(hmacKey1, (short)0, (short)64);
+		hmacKey2 = new byte[64];
+		randData.generateData(hmacKey2, (short)0, (short)64);
+
+		hmacBuf = JCSystem.makeTransientByteArray((short)128,
+		    JCSystem.CLEAR_ON_RESET);
+
+		sha1 = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
 	}
 
 	public void
@@ -159,10 +175,60 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		case CMD_GET_SERIAL:
 			handleGetSerial(apdu);
 			break;
+		case CMD_HMAC_1:
+			sendHmac(apdu, hmacKey1);
+			break;
+		case CMD_HMAC_2:
+			sendHmac(apdu, hmacKey2);
+			break;
 		default:
 			ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
 			return;
 		}
+	}
+
+	private void
+	sendHmac(APDU apdu, byte[] key)
+	{
+		final byte[] buffer = apdu.getBuffer();
+
+		if (buffer[ISO7816.OFFSET_LC] > (byte)64) {
+			ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+			return;
+		}
+
+		byte i;
+		short lc, hn, le;
+
+		lc = apdu.setIncomingAndReceive();
+		if (lc != (short)(buffer[ISO7816.OFFSET_LC] & 0x00FF)) {
+			ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+			return;
+		}
+
+		for (i = (byte)0; i < (byte)64; ++i) {
+			hmacBuf[i] = (byte)((byte)0x36 ^ key[i]);
+		}
+		Util.arrayCopyNonAtomic(buffer, apdu.getOffsetCdata(),
+		    hmacBuf, (short)64, lc);
+
+		sha1.reset();
+		hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + lc),
+		    hmacBuf, (short)64);
+
+		for (i = (byte)0; i < (byte)64; ++i) {
+			hmacBuf[i] = (byte)((byte)0x5C ^ key[i]);
+		}
+
+		le = apdu.setOutgoing();
+
+		sha1.reset();
+		hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + hn),
+		    buffer, (short)0);
+
+		hn = le > hn ? hn : le;
+		apdu.setOutgoingLength(hn);
+		apdu.sendBytes((short)0, hn);
 	}
 
 	private void
