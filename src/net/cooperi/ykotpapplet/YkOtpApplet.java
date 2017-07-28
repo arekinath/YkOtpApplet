@@ -150,7 +150,7 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		buffer[len++] = 0x00;
 		buffer[len++] = 0x00;
 
-		len = le > len ? len : le;
+		len = le > 0 ? (le > len ? len : le) : len;
 		apdu.setOutgoingLength(len);
 		apdu.sendBytes((short)0, len);
 	}
