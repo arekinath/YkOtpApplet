@@ -37,10 +37,10 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 	private static final byte INS_STATUS = (byte)0x03;
 	private static final byte INS_NDEF = (byte)0x04;
 
-	private static final byte CMD_GET_CONF_1 = (byte)0x01;
-	private static final byte CMD_GET_CONF_2 = (byte)0x03;
-	private static final byte CMD_SET_CONF_1 = (byte)0x04;
-	private static final byte CMD_SET_CONF_2 = (byte)0x05;
+	private static final byte CMD_SET_CONF_1 = (byte)0x01;
+	private static final byte CMD_SET_CONF_2 = (byte)0x03;
+	private static final byte CMD_UPDATE_CONF_1 = (byte)0x04;
+	private static final byte CMD_UPDATE_CONF_2 = (byte)0x05;
 	private static final byte CMD_SWAP = (byte)0x06;
 	private static final byte CMD_GET_SERIAL = (byte)0x10;
 	private static final byte CMD_DEV_CONF = (byte)0x11;
@@ -54,12 +54,15 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 	private static final byte CMD_HMAC_2 = (byte)0x38;
 
 	private static final byte PGM_SEQ_INVALID = (byte)0x00;
+	private static final short CONFIG1_VALID = (short)0x01;
+	private static final short CONFIG2_VALID = (short)0x02;
+	private static final short CONFIG1_TOUCH = (short)0x04;
+	private static final short CONFIG2_TOUCH = (short)0x08;
 
 	private byte pgmSeq = PGM_SEQ_INVALID;
 	private byte[] serial = null;
 
-	private byte[] hmacKey1 = null;
-	private byte[] hmacKey2 = null;
+	private SlotConfig[] slots;
 
 	private byte[] hmacBuf = null;
 
@@ -79,13 +82,12 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		randData = RandomData.getInstance(RandomData.ALG_SECURE_RANDOM);
 
 		serial = new byte[4];
-		serial[0] = (byte)0xFF;
+		serial[0] = (byte)0x10;
 		randData.generateData(serial, (short)1, (short)3);
 
-		hmacKey1 = new byte[64];
-		randData.generateData(hmacKey1, (short)0, (short)64);
-		hmacKey2 = new byte[64];
-		randData.generateData(hmacKey2, (short)0, (short)64);
+		slots = new SlotConfig[2];
+		slots[0] = new SlotConfig();
+		slots[1] = new SlotConfig();
 
 		hmacBuf = JCSystem.makeTransientByteArray((short)128,
 		    JCSystem.CLEAR_ON_RESET);
@@ -133,8 +135,16 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		buffer[len++] = APP_VERSION[1];
 		buffer[len++] = APP_VERSION[2];
 		buffer[len++] = pgmSeq;
-		/* We don't have a touch sensor, so fake it up. */
-		len = Util.setShort(buffer, len, (short)0x0300);
+
+		short touchLevel = 0;
+		if (slots[0].programmed)
+			touchLevel |= CONFIG1_VALID;
+		if (slots[1].programmed)
+			touchLevel |= CONFIG2_VALID;
+		/* touchLevel is little-endian */
+		buffer[len++] = (byte)(touchLevel & (short)0x00ff);
+		buffer[len++] = (byte)((touchLevel & (short)0xff00) >> 8);
+
 		buffer[len++] = 0x02;
 		buffer[len++] = 0x0F;
 		buffer[len++] = 0x00;
@@ -157,10 +167,17 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		buffer[len++] = APP_VERSION[1];
 		buffer[len++] = APP_VERSION[2];
 		buffer[len++] = pgmSeq;
-		/* We don't have a touch sensor, so fake it up. */
-		len = Util.setShort(buffer, len, (short)0x0300);
 
-		len = le > len ? len : le;
+		short touchLevel = 0;
+		if (slots[0].programmed)
+			touchLevel |= CONFIG1_VALID;
+		if (slots[1].programmed)
+			touchLevel |= CONFIG2_VALID;
+		/* touchLevel is little-endian */
+		buffer[len++] = (byte)(touchLevel & (short)0x00ff);
+		buffer[len++] = (byte)((touchLevel & (short)0xff00) >> 8);
+
+		len = le > 0 ? (le > len ? len : le) : len;
 		apdu.setOutgoingLength(len);
 		apdu.sendBytes((short)0, len);
 	}
@@ -175,16 +192,51 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		case CMD_GET_SERIAL:
 			handleGetSerial(apdu);
 			break;
+		case CMD_SET_CONF_1:
+			programSlot(apdu, slots[0]);
+			break;
+		case CMD_SET_CONF_2:
+			programSlot(apdu, slots[1]);
+			break;
 		case CMD_HMAC_1:
-			sendHmac(apdu, hmacKey1);
+			if (!slots[0].programmed) {
+				ISOException.throwIt(ISO7816.SW_NO_ERROR);
+				return;
+			}
+			sendHmac(apdu, slots[0].key);
 			break;
 		case CMD_HMAC_2:
-			sendHmac(apdu, hmacKey2);
+			if (!slots[1].programmed) {
+				ISOException.throwIt(ISO7816.SW_NO_ERROR);
+				return;
+			}
+			sendHmac(apdu, slots[1].key);
 			break;
 		default:
 			ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
 			return;
 		}
+	}
+
+	private void
+	programSlot(APDU apdu, SlotConfig slot)
+	{
+		final byte[] buffer = apdu.getBuffer();
+
+		byte i;
+		short lc, hn, le;
+
+		lc = apdu.setIncomingAndReceive();
+		if (lc != (short)(buffer[ISO7816.OFFSET_LC] & 0x00FF)) {
+			ISOException.throwIt(ISO7816.SW_WRONG_LENGTH);
+			return;
+		}
+
+		if (slot.read(buffer, apdu.getOffsetCdata(), lc)) {
+			pgmSeq++;
+		}
+
+		handleStatus(apdu);
 	}
 
 	private void
@@ -226,7 +278,7 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + hn),
 		    buffer, (short)0);
 
-		hn = le > hn ? hn : le;
+		hn = le > 0 ? (le > hn ? hn : le) : hn;
 		apdu.setOutgoingLength(hn);
 		apdu.sendBytes((short)0, hn);
 	}
@@ -242,7 +294,7 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		for (i = (short)0; i < (short)serial.length; ++i)
 			buffer[len++] = serial[i];
 
-		len = le > len ? len : le;
+		len = le > 0 ? (le > len ? len : le) : len;
 		apdu.setOutgoingLength(len);
 		apdu.sendBytes((short)0, len);
 	}
