@@ -23,6 +23,7 @@ import javacard.security.RandomData;
 import javacard.security.Signature;
 import javacard.security.SecretKey;
 import javacard.security.MessageDigest;
+import javacard.security.HMACKey;
 import javacardx.crypto.Cipher;
 import javacardx.apdu.ExtendedLength;
 
@@ -68,6 +69,8 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 
 	private RandomData randData = null;
 	private MessageDigest sha1 = null;
+	private Signature hmacSha1 = null;
+	private HMACKey hmacKey = null;
 
 	public static void
 	install(byte[] info, short off, byte len)
@@ -93,6 +96,20 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		    JCSystem.CLEAR_ON_RESET);
 
 		sha1 = MessageDigest.getInstance(MessageDigest.ALG_SHA, false);
+
+		try {
+			hmacSha1 = Signature.getInstance(
+			    Signature.ALG_HMAC_SHA1, false);
+
+			Key k = KeyBuilder.buildKey(
+			    KeyBuilder.TYPE_HMAC_TRANSIENT_RESET,
+			    KeyBuilder.LENGTH_HMAC_SHA_1_BLOCK_64,
+			    false);
+			hmacKey = (HMACKey)k;
+		} catch (CryptoException e) {
+			if (e.getReason() != CryptoException.NO_SUCH_ALGORITHM)
+				throw (e);
+		}
 	}
 
 	public void
@@ -258,18 +275,26 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 			return;
 		}
 
-		for (i = (byte)0; i < (byte)64; ++i) {
-			hmacBuf[i] = (byte)((byte)0x36 ^ key[i]);
-		}
-		Util.arrayCopyNonAtomic(buffer, apdu.getOffsetCdata(),
-		    hmacBuf, (short)64, lc);
+		if (hmacSha1 == null) {
+			for (i = (byte)0; i < (byte)64; ++i) {
+				hmacBuf[i] = (byte)((byte)0x36 ^ key[i]);
+			}
+			Util.arrayCopyNonAtomic(buffer, apdu.getOffsetCdata(),
+			    hmacBuf, (short)64, lc);
 
-		sha1.reset();
-		hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + lc),
-		    hmacBuf, (short)64);
+			sha1.reset();
+			hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + lc),
+			    hmacBuf, (short)64);
 
-		for (i = (byte)0; i < (byte)64; ++i) {
-			hmacBuf[i] = (byte)((byte)0x5C ^ key[i]);
+			for (i = (byte)0; i < (byte)64; ++i) {
+				hmacBuf[i] = (byte)((byte)0x5C ^ key[i]);
+			}
+
+		} else {
+			hmacKey.setKey(key, (short)0, (short)key.length);
+			hmacSha1.init(hmacKey, Signature.MODE_SIGN);
+			hn = hmacSha1.sign(buffer, apdu.getOffsetCdata(),
+			    lc, hmacBuf, (short)0);
 		}
 
 		le = apdu.setOutgoing();
