@@ -46,6 +46,8 @@ public class SlotConfig
 	public static final byte CFGFLAG_HMAC_LT64 = (byte)0x04;
 
 	public byte[] key = null;
+	public byte[] opad = null;
+	public byte[] ipad = null;
 	public byte[] accCode = null;
 	public boolean programmed = false;
 
@@ -53,12 +55,26 @@ public class SlotConfig
 	SlotConfig()
 	{
 		key = new byte[64];
+		opad = new byte[64];
+		ipad = new byte[64];
 	}
 
 	public byte fixedSize = (byte)0;
 	public byte extFlags = (byte)0;
 	public byte tktFlags = (byte)0;
 	public byte cfgFlags = (byte)0;
+
+	public void
+	computePads()
+	{
+		byte i;
+		for (i = (byte)0; i < (byte)64; ++i) {
+			ipad[i] = (byte)((byte)0x36 ^ key[i]);
+		}
+		for (i = (byte)0; i < (byte)64; ++i) {
+			opad[i] = (byte)((byte)0x5C ^ key[i]);
+		}
+	}
 
 	public boolean
 	read(byte[] input, short off, short len)

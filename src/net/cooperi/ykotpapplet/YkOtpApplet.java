@@ -220,14 +220,14 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 				ISOException.throwIt(ISO7816.SW_NO_ERROR);
 				return;
 			}
-			sendHmac(apdu, slots[0].key);
+			sendHmac(apdu, slots[0]);
 			break;
 		case CMD_HMAC_2:
 			if (!slots[1].programmed) {
 				ISOException.throwIt(ISO7816.SW_NO_ERROR);
 				return;
 			}
-			sendHmac(apdu, slots[1].key);
+			sendHmac(apdu, slots[1]);
 			break;
 		default:
 			ISOException.throwIt(ISO7816.SW_INCORRECT_P1P2);
@@ -251,13 +251,16 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 
 		if (slot.read(buffer, apdu.getOffsetCdata(), lc)) {
 			pgmSeq++;
+			if (hmacSha1 == null) {
+				slot.computePads();
+			}
 		}
 
 		handleStatus(apdu);
 	}
 
 	private void
-	sendHmac(APDU apdu, byte[] key)
+	sendHmac(APDU apdu, SlotConfig slot)
 	{
 		final byte[] buffer = apdu.getBuffer();
 
@@ -276,9 +279,8 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 		}
 
 		if (hmacSha1 == null) {
-			for (i = (byte)0; i < (byte)64; ++i) {
-				hmacBuf[i] = (byte)((byte)0x36 ^ key[i]);
-			}
+			Util.arrayCopyNonAtomic(slot.ipad, (short)0,
+			    hmacBuf, (short)0, (short)64);
 			Util.arrayCopyNonAtomic(buffer, apdu.getOffsetCdata(),
 			    hmacBuf, (short)64, lc);
 
@@ -286,22 +288,26 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 			hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + lc),
 			    hmacBuf, (short)64);
 
-			for (i = (byte)0; i < (byte)64; ++i) {
-				hmacBuf[i] = (byte)((byte)0x5C ^ key[i]);
-			}
+			Util.arrayCopyNonAtomic(slot.opad, (short)0,
+			    hmacBuf, (short)0, (short)64);
+
+			le = apdu.setOutgoing();
+
+			sha1.reset();
+			hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + hn),
+			    buffer, (short)0);
 
 		} else {
-			hmacKey.setKey(key, (short)0, (short)key.length);
+			hmacKey.setKey(slot.key, (short)0,
+			    (short)slot.key.length);
 			hmacSha1.init(hmacKey, Signature.MODE_SIGN);
 			hn = hmacSha1.sign(buffer, apdu.getOffsetCdata(),
 			    lc, hmacBuf, (short)0);
+
+			le = apdu.setOutgoing();
+			Util.arrayCopyNonAtomic(hmacBuf, (short)0, buffer,
+			    (short)0, hn);
 		}
-
-		le = apdu.setOutgoing();
-
-		sha1.reset();
-		hn = sha1.doFinal(hmacBuf, (short)0, (short)(64 + hn),
-		    buffer, (short)0);
 
 		hn = le > 0 ? (le > hn ? hn : le) : hn;
 		apdu.setOutgoingLength(hn);
