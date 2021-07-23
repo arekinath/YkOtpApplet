@@ -278,6 +278,23 @@ public class YkOtpApplet extends Applet implements ExtendedLength
 			return;
 		}
 
+		// Yubikey considers the last byte as padding 
+		//  if and only if the challenge size is 64 bytes
+		//  but then also all preceding bytes of the same value
+		if(lc == (short)64) {
+			lc--;
+			for(i = (byte)62; i>=(byte)0; i--) {
+				if(buffer[(byte)apdu.getOffsetCdata() + i] != buffer[(byte)apdu.getOffsetCdata() + 63]) {
+					break;
+				}
+				lc--;
+			}
+			if(lc == 0) {
+				ISOException.throwIt(ISO7816.SW_DATA_INVALID);
+				return;
+			}
+		}
+
 		if (hmacSha1 == null) {
 			Util.arrayCopyNonAtomic(slot.ipad, (short)0,
 			    hmacBuf, (short)0, (short)64);
