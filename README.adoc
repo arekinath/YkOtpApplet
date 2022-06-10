@@ -38,7 +38,7 @@ $ gp -install YkOtpApplet.cap
 CAP loaded
 -----
 
-The easiest way to program the applet with an HMAC secret is to use
+If installed on a Yubikey, you can program the applet with an HMAC secret using
 https://github.com/arekinath/yktool[yktool]:
 
 -----
@@ -52,6 +52,26 @@ Programmed slot 1 ok
 $ printf 'aaaa' | yktool hmac 1 -x
 72:7E:C8:E8:15:EE:C5:32:8F:9D:9C:BE:5E:F2:4E:A8:36:D7:CE:56
 -----
+
+If you install the applet to another JavaCard without HID capabilities, that tool
+won't detect your card as a Yubikey. You can program a secret by sending the correct
+ADPU sequence to your card. A helper script to generate those ADPUs is included in
+the repository:
+
+-----
+$ cat /dev/random | ./show_initalization_command.py
+opensc-tool -s 00A4040007A000000527200100 -s 0001030034000000000000000000000000000000001B1AECF9000077C051BAFD8E996FEED70C1384BEB94E0000000000000000402600000000
+-----
+
+The script must be fed with exactly twenty bytes of keying material - the
+HMAC secret for the slot. If you have the secret in hex form you can use 
+`xxd -r -p` to convert it to binary.
+
+Sending these two ADPUs (one to select the correct applet and one to program
+a slot config) to the card will initialize the applet. You can send ADPUs with
+GlobalPlatformPro, OpenSC, or the JavaCard tool of your choice.
+
+See the contents of the Python script to set a slot protection ("access") code.
 
 ## Building the project
 
